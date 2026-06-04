@@ -1,0 +1,17 @@
+[Unit]
+Description=PSRDEX Streamlit web application
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pmarmat/psrdex
+Environment=PSRDEX_OUTPUT_DIR=/home/pmarmat/psrdex_catalog
+Environment=PSRDEX_TELESCOPE_LAT_DEG=
+Environment=PSRDEX_TELESCOPE_LON_DEG=
+Environment=PSRDEX_TELESCOPE_HEIGHT_M=
+ExecStart=/home/pmarmat/psrdex/.venv/bin/streamlit run app/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

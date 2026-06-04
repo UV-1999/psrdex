@@ -1,0 +1,11 @@
+[Unit]
+Description=PSRDEX incremental pulsar metadata update
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/pmarmat/psrdex
+Environment=PSRDEX_DATA_DIR=/QNAP/LOFAR/PL611
+Environment=PSRDEX_OUTPUT_DIR=/home/pmarmat/psrdex_catalog
+Environment=PSRDEX_GLOB=*.nop
+Environment=PSRDEX_MAX_WORKERS=8
+ExecStart=/home/pmarmat/psrdex/.venv/bin/psrdex-update update
