@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import unittest
-from datetime import UTC
+from datetime import timezone
 from pathlib import Path
 
 from psrdex.discovery import FileFingerprint
 from psrdex.extractor import build_observation, compute_tbin, get_datetime_utc, infer_band, mjd_to_utc
+
+UTC = timezone.utc
 
 
 class ExtractorTests(unittest.TestCase):

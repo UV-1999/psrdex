@@ -4,13 +4,15 @@ import csv
 import re
 import sqlite3
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from psrdex.config import Settings
 from psrdex.discovery import FileFingerprint
 from psrdex.extractor import OBSERVATION_COLUMNS, ExtractionResult
+
+UTC = timezone.utc
 
 
 def utc_now() -> str:

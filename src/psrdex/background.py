@@ -4,10 +4,12 @@ import os
 import subprocess
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from psrdex.config import Settings
+
+UTC = timezone.utc
 
 
 def enabled(value: str | None, *, default: bool = True) -> bool:

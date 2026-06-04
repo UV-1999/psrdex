@@ -4,13 +4,14 @@ import logging
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from psrdex.discovery import FileFingerprint
 
 LOGGER = logging.getLogger(__name__)
+UTC = timezone.utc
 
 VAP_FIELDS = [
     "name",
