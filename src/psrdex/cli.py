@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--glob", dest="glob_pattern", help="Archive glob pattern, e.g. '*.nop'.")
     parser.add_argument("--workers", type=int, help="Number of parallel vap workers.")
     parser.add_argument("--vap-bin", help="Path/name of the PSRCHIVE vap executable.")
+    parser.add_argument("--pdv-bin", help="Path/name of the PSRCHIVE pdv executable.")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging.")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -34,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     update = subparsers.add_parser("update", help="Scan for new/changed files and update catalogs.")
     update.add_argument("--retry-failures", action="store_true", help="Retry unchanged failed files.")
     update.add_argument("--dry-run", action="store_true", help="Report pending files without processing.")
+    update.add_argument("--force", action="store_true", help="Reprocess every discovered file.")
 
     subparsers.add_parser("export", help="Re-export CSV catalogs from SQLite.")
     subparsers.add_parser("status", help="Print current manifest counts.")
@@ -48,6 +50,7 @@ def apply_cli_overrides(settings: Settings, args: argparse.Namespace) -> Setting
         glob_pattern=args.glob_pattern,
         max_workers=args.workers,
         vap_bin=args.vap_bin,
+        pdv_bin=args.pdv_bin,
     )
 
 
@@ -63,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             settings,
             retry_failures=args.retry_failures,
             dry_run=args.dry_run,
+            force=args.force,
         )
         print(json.dumps(report.__dict__, indent=2, sort_keys=True))
         return 0

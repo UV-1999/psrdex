@@ -83,6 +83,8 @@ def maybe_start_background_update(
         str(settings.max_workers),
         "--vap-bin",
         settings.vap_bin,
+        "--pdv-bin",
+        settings.pdv_bin,
         "update",
     ]
 

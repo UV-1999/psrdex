@@ -101,7 +101,11 @@ class CatalogStore:
         fingerprints: Iterable[FileFingerprint],
         *,
         retry_failures: bool = False,
+        force: bool = False,
     ) -> list[FileFingerprint]:
+        if force:
+            return list(fingerprints)
+
         pending: list[FileFingerprint] = []
         for fp in fingerprints:
             row = self.conn.execute(

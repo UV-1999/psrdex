@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import subprocess
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from psrdex.discovery import FileFingerprint
 
 LOGGER = logging.getLogger(__name__)
 UTC = timezone.utc
+PSRCHIVE_IMPORT_WARNED = False
 
 VAP_FIELDS = [
     "name",
@@ -142,6 +144,20 @@ def infer_band(freq_mhz: Any, bw_mhz: Any) -> str:
     return "unknown"
 
 
+def band_label(band: str | None) -> str:
+    labels = {
+        "1b": "lane1b: HBA 129 MHz (117-141 MHz)",
+        "2b": "lane2b: HBA 153 MHz (141-165 MHz)",
+        "3b": "lane3b: HBA 177 MHz (165-189 MHz)",
+        "0b": "lane0b: HBA combined 1b+2b+3b (117-189 MHz)",
+        "1c": "lane1c: LBA 50 MHz (44-56 MHz)",
+        "2c": "lane2c: LBA 62 MHz (56-68 MHz)",
+        "3c": "lane3c: LBA 74 MHz (68-80 MHz)",
+        "0c": "lane0c: LBA combined 1c+2c+3c (44-80 MHz)",
+    }
+    return labels.get(str(band), "unknown")
+
+
 def pulsar_from_filename(path: Path) -> str | None:
     match = FILENAME_REGEX.search(path.name)
     if not match:
@@ -198,6 +214,16 @@ def parse_vap_output(stdout: str) -> dict[str, str] | None:
     return None
 
 
+def parse_single_vap_value(stdout: str) -> str | None:
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            return parts[1]
+    return None
+
+
 def run_vap(path: Path, vap_bin: str, timeout_sec: int) -> dict[str, str] | None:
     cmd = [
         vap_bin,
@@ -214,6 +240,152 @@ def run_vap(path: Path, vap_bin: str, timeout_sec: int) -> dict[str, str] | None
         timeout=timeout_sec,
     )
     return parse_vap_output(result.stdout)
+
+
+def run_optional_vap_float(
+    path: Path,
+    vap_bin: str,
+    timeout_sec: int,
+    field: str,
+) -> float | None:
+    cmd = [vap_bin, "-n", "-c", field, str(path)]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=timeout_sec,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    return to_float(parse_single_vap_value(result.stdout))
+
+
+def flatten_profile(profile: Any) -> list[float]:
+    if isinstance(profile, (int, float)):
+        value = float(profile)
+        return [value] if math.isfinite(value) else []
+    values: list[float] = []
+    try:
+        iterator = iter(profile)
+    except TypeError:
+        return values
+    for item in iterator:
+        if isinstance(item, (str, bytes)):
+            continue
+        nested = flatten_profile(item)
+        if nested:
+            values.extend(nested)
+    return values
+
+
+def profile_snr(profile: Any, *, n_segments: int = 10) -> float | None:
+    values = flatten_profile(profile)
+    if len(values) < n_segments or n_segments < 2:
+        return None
+
+    segment_size = len(values) / n_segments
+    segments = [
+        values[round(i * segment_size) : round((i + 1) * segment_size)]
+        for i in range(n_segments)
+    ]
+    segments = [segment for segment in segments if segment]
+    off_pulse = min(segments, key=lambda segment: sum(segment) / len(segment))
+    if len(off_pulse) < 2:
+        return None
+
+    mu_off = sum(off_pulse) / len(off_pulse)
+    variance = sum((value - mu_off) ** 2 for value in off_pulse) / len(off_pulse)
+    sigma_off = math.sqrt(variance)
+    if not math.isfinite(sigma_off) or sigma_off <= 0:
+        return None
+
+    i_max = max(values)
+    snr = (i_max - mu_off) / sigma_off
+    return snr if math.isfinite(snr) else None
+
+
+def integrated_profile_from_psrchive(path: Path) -> np.ndarray | None:
+    global PSRCHIVE_IMPORT_WARNED
+
+    try:
+        import psrchive  # type: ignore[import-not-found]
+        import numpy as np
+    except Exception:
+        if not PSRCHIVE_IMPORT_WARNED:
+            LOGGER.warning(
+                "PSRCHIVE Python bindings are unavailable; falling back to pdv for profile SNR"
+            )
+            PSRCHIVE_IMPORT_WARNED = True
+        return None
+
+    try:
+        archive = psrchive.Archive_load(str(path))
+        archive.dedisperse()
+        archive.tscrunch()
+        archive.fscrunch()
+        archive.pscrunch()
+        data = np.asarray(archive.get_data(), dtype=float)
+    except Exception:
+        LOGGER.exception("Failed to load integrated profile from %s", path)
+        return None
+
+    profile = np.squeeze(data)
+    if profile.ndim != 1:
+        profile = np.sum(profile, axis=tuple(range(profile.ndim - 1)))
+    return np.asarray(profile, dtype=float)
+
+
+def parse_pdv_profile(stdout: str) -> list[float] | None:
+    values: list[float] = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        numeric_parts = []
+        for part in parts:
+            try:
+                numeric_parts.append(float(part))
+            except ValueError:
+                pass
+        if numeric_parts:
+            values.append(numeric_parts[-1])
+    if not values:
+        return None
+    return values
+
+
+def integrated_profile_from_pdv(path: Path, pdv_bin: str, timeout_sec: int) -> list[float] | None:
+    commands = [
+        [pdv_bin, "-FTp", str(path)],
+        [pdv_bin, "-t", "-F", "-T", "-p", str(path)],
+    ]
+    for cmd in commands:
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=timeout_sec,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            continue
+        profile = parse_pdv_profile(result.stdout)
+        if profile is not None and len(profile) >= 10:
+            return profile
+    return None
+
+
+def compute_profile_snr(path: Path, pdv_bin: str, timeout_sec: int) -> float | None:
+    profile = integrated_profile_from_psrchive(path)
+    if profile is None:
+        profile = integrated_profile_from_pdv(path, pdv_bin=pdv_bin, timeout_sec=timeout_sec)
+    if profile is None:
+        return None
+    return profile_snr(profile)
 
 
 def build_observation(
@@ -258,13 +430,21 @@ def process_file(
     fingerprint: FileFingerprint,
     *,
     vap_bin: str = "vap",
+    pdv_bin: str = "pdv",
     timeout_sec: int = 120,
+    extract_snr: bool = True,
 ) -> ExtractionResult:
     try:
         vap = run_vap(fingerprint.path, vap_bin=vap_bin, timeout_sec=timeout_sec)
         if vap is None:
             return ExtractionResult(fingerprint, None, "vap returned no parseable metadata")
         observation = build_observation(fingerprint, vap)
+        if extract_snr:
+            observation["snr"] = compute_profile_snr(
+                fingerprint.path,
+                pdv_bin=pdv_bin,
+                timeout_sec=timeout_sec,
+            )
         return ExtractionResult(fingerprint, observation)
     except subprocess.TimeoutExpired:
         return ExtractionResult(fingerprint, None, f"vap timed out after {timeout_sec} seconds")

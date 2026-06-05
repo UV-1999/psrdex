@@ -25,18 +25,6 @@ try:
 except Exception:  # pragma: no cover - app handles missing optional runtime deps.
     QueryATNF = None
 
-try:
-    import astropy.units as u
-    from astropy.coordinates import AltAz, EarthLocation, SkyCoord, get_sun
-    from astropy.time import Time
-except Exception:  # pragma: no cover - app handles missing optional runtime deps.
-    AltAz = None
-    EarthLocation = None
-    SkyCoord = None
-    Time = None
-    get_sun = None
-    u = None
-
 
 ATNF_PARAMS = [
     "PSRJ",
@@ -51,14 +39,99 @@ ATNF_PARAMS = [
     "BINARY",
 ]
 
+BAND_INFO = {
+    "1b": {
+        "label": "lane1b: HBA 129 MHz (117-141 MHz)",
+        "short": "lane1b",
+        "receiver": "HBA",
+        "center_mhz": 129,
+        "range_mhz": "117-141 MHz",
+    },
+    "2b": {
+        "label": "lane2b: HBA 153 MHz (141-165 MHz)",
+        "short": "lane2b",
+        "receiver": "HBA",
+        "center_mhz": 153,
+        "range_mhz": "141-165 MHz",
+    },
+    "3b": {
+        "label": "lane3b: HBA 177 MHz (165-189 MHz)",
+        "short": "lane3b",
+        "receiver": "HBA",
+        "center_mhz": 177,
+        "range_mhz": "165-189 MHz",
+    },
+    "0b": {
+        "label": "lane0b: HBA combined 1b+2b+3b (117-189 MHz)",
+        "short": "lane0b",
+        "receiver": "HBA",
+        "center_mhz": None,
+        "range_mhz": "117-189 MHz",
+    },
+    "1c": {
+        "label": "lane1c: LBA 50 MHz (44-56 MHz)",
+        "short": "lane1c",
+        "receiver": "LBA",
+        "center_mhz": 50,
+        "range_mhz": "44-56 MHz",
+    },
+    "2c": {
+        "label": "lane2c: LBA 62 MHz (56-68 MHz)",
+        "short": "lane2c",
+        "receiver": "LBA",
+        "center_mhz": 62,
+        "range_mhz": "56-68 MHz",
+    },
+    "3c": {
+        "label": "lane3c: LBA 74 MHz (68-80 MHz)",
+        "short": "lane3c",
+        "receiver": "LBA",
+        "center_mhz": 74,
+        "range_mhz": "68-80 MHz",
+    },
+    "0c": {
+        "label": "lane0c: LBA combined 1c+2c+3c (44-80 MHz)",
+        "short": "lane0c",
+        "receiver": "LBA",
+        "center_mhz": None,
+        "range_mhz": "44-80 MHz",
+    },
+}
+
+
+def band_label(band: Any) -> str:
+    return BAND_INFO.get(str(band), {}).get("label", str(band))
+
+
+def band_sort_key(band: Any) -> tuple[int, str]:
+    order = {"0b": 0, "1b": 1, "2b": 2, "3b": 3, "0c": 4, "1c": 5, "2c": 6, "3c": 7}
+    text = str(band)
+    return (order.get(text, 99), text)
+
 
 def page_setup() -> None:
     st.set_page_config(page_title="PSRDEX", page_icon=".", layout="wide")
     st.markdown(
         """
         <style>
-        .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
-        div[data-testid="stMetric"] { background: #f8f9fb; border: 1px solid #e4e7ec; padding: 0.75rem; }
+        .block-container {
+            max-width: 1480px;
+            padding-top: 1.5rem;
+            padding-bottom: 2.5rem;
+        }
+        h1 {
+            margin-bottom: 0.15rem;
+        }
+        .psrdex-subtitle {
+            color: #475467;
+            font-size: 1.05rem;
+            margin-bottom: 0.2rem;
+        }
+        .psrdex-updated {
+            color: #667085;
+            font-size: 0.9rem;
+            margin-bottom: 1.25rem;
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -70,6 +143,7 @@ def load_observations(output_dir: str) -> pd.DataFrame:
     path = Path(output_dir) / "observations.csv"
     if not path.exists():
         return pd.DataFrame()
+
     df = pd.read_csv(path)
     for column in [
         "mjd",
@@ -79,11 +153,15 @@ def load_observations(output_dir: str) -> pd.DataFrame:
         "period_sec",
         "dm",
         "snr",
+        "total_snr",
     ]:
         if column in df:
             df[column] = pd.to_numeric(df[column], errors="coerce")
     if "datetime_utc" in df:
         df["datetime_utc"] = pd.to_datetime(df["datetime_utc"], errors="coerce", utc=True)
+    if "band" in df:
+        df["band_label"] = df["band"].map(band_label)
+    df["row_id"] = np.arange(len(df)).astype(str)
     return df
 
 
@@ -98,6 +176,7 @@ def load_atnf(pulsars: tuple[str, ...]) -> pd.DataFrame:
         return pd.DataFrame()
     if table is None:
         return pd.DataFrame()
+
     df = table.copy()
     if "PSRJ" in df:
         df["PSRJ"] = df["PSRJ"].astype(str)
@@ -105,6 +184,36 @@ def load_atnf(pulsars: tuple[str, ...]) -> pd.DataFrame:
         if column in df:
             df[column] = pd.to_numeric(df[column], errors="coerce")
     return df
+
+
+def latest_catalog_label(output_dir: Path, observations: pd.DataFrame) -> str:
+    if "processed_at_utc" in observations and observations["processed_at_utc"].notna().any():
+        processed = pd.to_datetime(observations["processed_at_utc"], errors="coerce", utc=True)
+        if processed.notna().any():
+            return processed.max().strftime("%Y-%m-%d %H:%M UTC")
+
+    catalog = output_dir / "observations.csv"
+    if catalog.exists():
+        modified = pd.Timestamp(catalog.stat().st_mtime, unit="s", tz="UTC")
+        return modified.strftime("%Y-%m-%d %H:%M UTC")
+    return "not available"
+
+
+def re_split_angle(text: str) -> list[str]:
+    cleaned = (
+        text.replace("h", ":")
+        .replace("m", ":")
+        .replace("s", "")
+        .replace("d", ":")
+        .replace("'", ":")
+        .replace('"', "")
+    )
+    parts = [part for part in cleaned.replace(" ", ":").split(":") if part]
+    try:
+        [float(part) for part in parts]
+    except ValueError:
+        return []
+    return parts
 
 
 def sexagesimal_to_degrees(value: Any, *, is_ra: bool) -> float | None:
@@ -134,23 +243,6 @@ def sexagesimal_to_degrees(value: Any, *, is_ra: bool) -> float | None:
     return sign * degrees
 
 
-def re_split_angle(text: str) -> list[str]:
-    cleaned = (
-        text.replace("h", ":")
-        .replace("m", ":")
-        .replace("s", "")
-        .replace("d", ":")
-        .replace("'", ":")
-        .replace('"', "")
-    )
-    parts = [part for part in cleaned.replace(" ", ":").split(":") if part]
-    try:
-        [float(part) for part in parts]
-    except ValueError:
-        return []
-    return parts
-
-
 def local_positions(observations: pd.DataFrame, atnf: pd.DataFrame) -> pd.DataFrame:
     if observations.empty:
         return pd.DataFrame(columns=["pulsar", "ra_deg", "dec_deg", "n_files", "duration_hours"])
@@ -158,8 +250,11 @@ def local_positions(observations: pd.DataFrame, atnf: pd.DataFrame) -> pd.DataFr
     summary = (
         observations.groupby("pulsar", dropna=False)
         .agg(
-            n_files=("path", "count"),
-            duration_hours=("duration_sec", lambda values: pd.to_numeric(values, errors="coerce").sum() / 3600),
+            n_files=("row_id", "count"),
+            duration_hours=(
+                "duration_sec",
+                lambda values: pd.to_numeric(values, errors="coerce").sum() / 3600,
+            ),
             ra=("ra", "first"),
             dec=("dec", "first"),
         )
@@ -184,7 +279,7 @@ def local_positions(observations: pd.DataFrame, atnf: pd.DataFrame) -> pd.DataFr
     return summary.dropna(subset=["ra_deg", "dec_deg"])
 
 
-def ppdot_figure(atnf: pd.DataFrame, selected: str | None) -> go.Figure:
+def ppdot_figure(atnf: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     if not atnf.empty and {"PSRJ", "P0", "P1"}.issubset(atnf.columns):
         df = atnf.dropna(subset=["P0", "P1"]).copy()
@@ -193,65 +288,73 @@ def ppdot_figure(atnf: pd.DataFrame, selected: str | None) -> go.Figure:
             x="P0",
             y="P1",
             hover_name="PSRJ",
-            custom_data=["PSRJ"],
             log_x=True,
             log_y=True,
-            color=df["PSRJ"].eq(selected).map({True: "Selected", False: "Local"}),
-            color_discrete_map={"Selected": "#d62728", "Local": "#2f6f9f"},
-            labels={"P0": "Period P (s)", "P1": "Pdot (s/s)", "color": ""},
+            color_discrete_sequence=["#2f6f9f"],
+            labels={"P0": "Period P (s)", "P1": "Pdot (s/s)"},
         )
     fig.update_layout(
-        height=460,
-        margin=dict(l=10, r=10, t=20, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        title="P-Pdot Diagram",
+        height=440,
+        margin=dict(l=10, r=10, t=48, b=10),
+        showlegend=False,
     )
     return fig
 
 
-def sky_figure(positions: pd.DataFrame, selected: str | None) -> go.Figure:
+def sky_figure(positions: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
+
+    theta = np.linspace(0, 2 * np.pi, 160)
+    fig.add_trace(
+        go.Scatter3d(
+            x=np.cos(theta),
+            y=np.sin(theta),
+            z=np.zeros_like(theta),
+            mode="lines",
+            line=dict(color="#101828", width=3),
+            hoverinfo="skip",
+            showlegend=False,
+        )
+    )
+    for z_level in np.linspace(-0.75, 0.75, 5):
+        radius = math.sqrt(1 - z_level**2)
+        fig.add_trace(
+            go.Scatter3d(
+                x=radius * np.cos(theta),
+                y=radius * np.sin(theta),
+                z=np.full_like(theta, z_level),
+                mode="lines",
+                line=dict(color="#d0d5dd", width=1),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
     if not positions.empty:
         ra = np.deg2rad(positions["ra_deg"].to_numpy())
         dec = np.deg2rad(positions["dec_deg"].to_numpy())
-        x = np.cos(dec) * np.cos(ra)
-        y = np.cos(dec) * np.sin(ra)
-        z = np.sin(dec)
-        colors = np.where(positions["pulsar"].to_numpy() == selected, "#d62728", "#2f6f9f")
-
         fig.add_trace(
             go.Scatter3d(
-                x=x,
-                y=y,
-                z=z,
+                x=np.cos(dec) * np.cos(ra),
+                y=np.cos(dec) * np.sin(ra),
+                z=np.sin(dec),
                 mode="markers",
-                marker=dict(size=6, color=colors, opacity=0.9),
-                text=positions["pulsar"],
+                marker=dict(size=5, color="#2f6f9f", opacity=0.88),
                 customdata=positions[["pulsar", "n_files", "duration_hours"]].to_numpy(),
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
                     "files=%{customdata[1]}<br>"
                     "hours=%{customdata[2]:.2f}<extra></extra>"
                 ),
+                showlegend=False,
             )
         )
 
-        theta = np.linspace(0, 2 * np.pi, 72)
-        for z_level in np.linspace(-0.75, 0.75, 5):
-            radius = math.sqrt(1 - z_level**2)
-            fig.add_trace(
-                go.Scatter3d(
-                    x=radius * np.cos(theta),
-                    y=radius * np.sin(theta),
-                    z=np.full_like(theta, z_level),
-                    mode="lines",
-                    line=dict(color="#d0d5dd", width=1),
-                    hoverinfo="skip",
-                    showlegend=False,
-                )
-            )
     fig.update_layout(
-        height=460,
-        margin=dict(l=0, r=0, t=20, b=0),
+        title="Equatorial Sky",
+        height=440,
+        margin=dict(l=0, r=0, t=48, b=0),
         scene=dict(
             xaxis=dict(visible=False),
             yaxis=dict(visible=False),
@@ -263,304 +366,205 @@ def sky_figure(positions: pd.DataFrame, selected: str | None) -> go.Figure:
     return fig
 
 
-def selected_from_plot(event: Any) -> str | None:
+def snr_column(df: pd.DataFrame) -> str | None:
+    for column in ["total_snr", "snr", "SNR", "total_SNR"]:
+        if column in df and pd.to_numeric(df[column], errors="coerce").notna().any():
+            return column
+    return None
+
+
+def filtered_observations(
+    observations: pd.DataFrame,
+    pulsar: str,
+    band: str,
+) -> tuple[pd.DataFrame, str | None]:
+    df = observations[observations["pulsar"].astype(str) == pulsar].copy()
+    if band != "All bands" and "band" in df:
+        df = df[df["band"].astype(str) == band]
+    y_column = snr_column(df)
+    if y_column is None:
+        df["snr_for_plot"] = np.nan
+    else:
+        df["snr_for_plot"] = pd.to_numeric(df[y_column], errors="coerce")
+    return df.sort_values("datetime_utc"), y_column
+
+
+def observation_figure(df: pd.DataFrame, y_column: str | None) -> go.Figure:
+    plot_df = df.dropna(subset=["datetime_utc"]).copy()
+    if y_column is None:
+        plot_df["snr_for_plot"] = 0.0
+
+    fig = px.scatter(
+        plot_df,
+        x="datetime_utc",
+        y="snr_for_plot",
+        color="band_label" if "band_label" in plot_df else None,
+        custom_data=["row_id"],
+        hover_data=[
+            column
+            for column in ["file_name", "band_label", "freq_mhz", "bandwidth_mhz", "dm", "period_sec"]
+            if column in plot_df
+        ],
+        labels={"datetime_utc": "Time", "snr_for_plot": "Total SNR"},
+        color_discrete_sequence=px.colors.qualitative.Set2,
+    )
+    fig.update_traces(marker=dict(size=9, opacity=0.9))
+    fig.update_layout(
+        title="Observations",
+        height=430,
+        margin=dict(l=10, r=10, t=48, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    if y_column is None:
+        fig.add_annotation(
+            text="SNR is not available in the current catalog",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font=dict(color="#667085", size=14),
+        )
+    return fig
+
+
+def selected_row_id(event: Any) -> str | None:
     try:
         points = event.selection.points
     except AttributeError:
-        if isinstance(event, dict):
-            points = event.get("selection", {}).get("points", [])
-        else:
-            points = []
+        points = event.get("selection", {}).get("points", []) if isinstance(event, dict) else []
     if not points:
         return None
     point = points[0]
-    if isinstance(point, dict):
-        customdata = point.get("customdata")
-    else:
-        customdata = getattr(point, "customdata", None)
+    customdata = point.get("customdata") if isinstance(point, dict) else getattr(point, "customdata", None)
     if isinstance(customdata, (list, tuple, np.ndarray)) and len(customdata):
         return str(customdata[0])
     return None
 
 
-def format_hours(seconds: float | int | None) -> str:
-    if seconds is None or pd.isna(seconds):
-        return "0.00"
-    return f"{float(seconds) / 3600:.2f}"
+def selected_observation(df: pd.DataFrame, event: Any) -> pd.Series | None:
+    row_id = selected_row_id(event)
+    if row_id is not None:
+        matched = df[df["row_id"].astype(str) == row_id]
+        if not matched.empty:
+            return matched.iloc[0]
+    if not df.empty:
+        return df.sort_values("datetime_utc").iloc[-1]
+    return None
 
 
-def sun_separation_plot(selected_df: pd.DataFrame, pulsar_row: pd.Series | None) -> go.Figure:
-    fig = go.Figure()
-    if (
-        selected_df.empty
-        or pulsar_row is None
-        or SkyCoord is None
-        or Time is None
-        or get_sun is None
-        or u is None
-    ):
-        return fig
+def metadata_table(row: pd.Series | None, atnf: pd.DataFrame) -> pd.DataFrame:
+    if row is None:
+        return pd.DataFrame(columns=["field", "value"])
 
-    ra_deg = sexagesimal_to_degrees(pulsar_row.get("ra_source"), is_ra=True)
-    dec_deg = sexagesimal_to_degrees(pulsar_row.get("dec_source"), is_ra=False)
-    times = selected_df["datetime_utc"].dropna()
-    if ra_deg is None or dec_deg is None or times.empty:
-        return fig
+    values: list[tuple[str, Any]] = []
+    for label, column in [
+        ("Pulsar", "pulsar"),
+        ("File name", "file_name"),
+        ("Datetime UTC", "datetime_utc"),
+        ("Frequency band", "band_label"),
+        ("Total SNR", "snr_for_plot"),
+        ("DM", "dm"),
+        ("Period", "period_sec"),
+        ("MJD", "mjd"),
+        ("Frequency MHz", "freq_mhz"),
+        ("Bandwidth MHz", "bandwidth_mhz"),
+        ("Duration sec", "duration_sec"),
+        ("Path", "path"),
+    ]:
+        if column in row.index:
+            value = row[column]
+            if pd.notna(value):
+                values.append((label, value))
 
-    try:
-        skycoord = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg)
-        astropy_time = Time(times.dt.to_pydatetime())
-        sun = get_sun(astropy_time)
-        separation = skycoord.separation(sun).deg
-    except Exception:
-        return fig
-
-    fig.add_trace(
-        go.Scatter(
-            x=times,
-            y=separation,
-            mode="markers+lines",
-            marker=dict(color="#2f6f9f", size=7),
-        )
-    )
-    fig.update_layout(
-        height=320,
-        margin=dict(l=10, r=10, t=20, b=10),
-        xaxis_title="Observation UTC",
-        yaxis_title="Sun separation (deg)",
-    )
-    return fig
-
-
-def telescope_track_plot(selected_df: pd.DataFrame, pulsar_row: pd.Series | None) -> go.Figure:
-    settings = load_settings()
-    fig = go.Figure()
-    if (
-        selected_df.empty
-        or pulsar_row is None
-        or SkyCoord is None
-        or EarthLocation is None
-        or AltAz is None
-        or Time is None
-        or u is None
-        or settings.telescope_lat_deg is None
-        or settings.telescope_lon_deg is None
-    ):
-        return fig
-
-    ra_deg = sexagesimal_to_degrees(pulsar_row.get("ra_source"), is_ra=True)
-    dec_deg = sexagesimal_to_degrees(pulsar_row.get("dec_source"), is_ra=False)
-    times = selected_df["datetime_utc"].dropna()
-    if ra_deg is None or dec_deg is None or times.empty:
-        return fig
-
-    try:
-        location = EarthLocation(
-            lat=settings.telescope_lat_deg * u.deg,
-            lon=settings.telescope_lon_deg * u.deg,
-            height=(settings.telescope_height_m or 0) * u.m,
-        )
-        skycoord = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg)
-        frame = AltAz(obstime=Time(times.dt.to_pydatetime()), location=location)
-        altaz = skycoord.transform_to(frame)
-    except Exception:
-        return fig
-
-    fig.add_trace(
-        go.Scatter(
-            x=altaz.az.deg,
-            y=altaz.alt.deg,
-            mode="markers",
-            marker=dict(
-                color=times.astype("int64"),
-                colorscale="Viridis",
-                size=8,
-                colorbar=dict(title="UTC"),
-            ),
-            text=times.astype(str),
-            hovertemplate="az=%{x:.2f}<br>alt=%{y:.2f}<br>%{text}<extra></extra>",
-        )
-    )
-    fig.update_layout(
-        height=320,
-        margin=dict(l=10, r=10, t=20, b=10),
-        xaxis_title="Azimuth (deg)",
-        yaxis_title="Altitude (deg)",
-    )
-    return fig
-
-
-def render_selected_pulsar(
-    pulsar: str,
-    observations: pd.DataFrame,
-    positions: pd.DataFrame,
-    atnf: pd.DataFrame,
-) -> None:
-    selected_df = observations[observations["pulsar"] == pulsar].copy()
-    selected_df = selected_df.sort_values("mjd") if "mjd" in selected_df else selected_df
-    position_rows = positions[positions["pulsar"] == pulsar]
-    pulsar_row = position_rows.iloc[0] if not position_rows.empty else None
-
-    total_seconds = selected_df["duration_sec"].fillna(0).sum() if "duration_sec" in selected_df else 0
-    bands = sorted(str(band) for band in selected_df["band"].dropna().unique()) if "band" in selected_df else []
-    first_date = selected_df["datetime_utc"].dropna().min() if "datetime_utc" in selected_df else None
-    last_date = selected_df["datetime_utc"].dropna().max() if "datetime_utc" in selected_df else None
-
-    st.subheader(pulsar)
-    metric_cols = st.columns(4)
-    metric_cols[0].metric("Files", f"{len(selected_df):,}")
-    metric_cols[1].metric("Hours", format_hours(total_seconds))
-    metric_cols[2].metric("Bands", ", ".join(bands) if bands else "unknown")
-    metric_cols[3].metric(
-        "Date Range",
-        " - ".join(
+    band = str(row.get("band")) if "band" in row.index else ""
+    info = BAND_INFO.get(band)
+    if info is not None:
+        values.extend(
             [
-                first_date.strftime("%Y-%m-%d") if pd.notna(first_date) else "?",
-                last_date.strftime("%Y-%m-%d") if pd.notna(last_date) else "?",
+                ("Receiver", info["receiver"]),
+                ("Lane", info["short"]),
+                ("Lane range", info["range_mhz"]),
             ]
-        ),
-    )
-
-    band_table = pd.DataFrame()
-    if not selected_df.empty and "band" in selected_df:
-        band_table = (
-            selected_df.groupby("band", dropna=False)
-            .agg(
-                files=("path", "count"),
-                hours=("duration_sec", lambda values: pd.to_numeric(values, errors="coerce").sum() / 3600),
-                first_mjd=("mjd", "min"),
-                last_mjd=("mjd", "max"),
-            )
-            .reset_index()
-            .sort_values("band")
         )
+        if info["center_mhz"] is not None:
+            values.append(("Lane center", f"{info['center_mhz']} MHz"))
 
-    left, right = st.columns([1.1, 1])
-    with left:
-        st.markdown("#### Band Coverage")
-        st.dataframe(band_table, use_container_width=True, hide_index=True)
-    with right:
-        st.markdown("#### ATNF Metadata")
-        atnf_row = (
-            atnf[atnf["PSRJ"] == pulsar].iloc[0].to_frame("value")
-            if not atnf.empty and "PSRJ" in atnf and (atnf["PSRJ"] == pulsar).any()
-            else pd.DataFrame()
-        )
-        st.dataframe(atnf_row, use_container_width=True)
+    pulsar = str(row.get("pulsar"))
+    if not atnf.empty and "PSRJ" in atnf and (atnf["PSRJ"] == pulsar).any():
+        atnf_row = atnf[atnf["PSRJ"] == pulsar].iloc[0]
+        for label, column in [
+            ("ATNF DM", "DM"),
+            ("ATNF Period P0", "P0"),
+            ("ATNF Pdot P1", "P1"),
+            ("ATNF RAJ", "RAJ"),
+            ("ATNF DECJ", "DECJ"),
+            ("ATNF Distance", "DIST"),
+            ("ATNF Age", "AGE"),
+        ]:
+            if column in atnf_row.index and pd.notna(atnf_row[column]):
+                values.append((label, atnf_row[column]))
 
-    plot_cols = st.columns(2)
-    with plot_cols[0]:
-        st.markdown("#### Sun Separation")
-        fig = sun_separation_plot(selected_df, pulsar_row)
-        if fig.data:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Sun-separation data are unavailable for this selection.")
-    with plot_cols[1]:
-        st.markdown("#### Telescope Track")
-        fig = telescope_track_plot(selected_df, pulsar_row)
-        if fig.data:
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Telescope track data need valid coordinates and observation times.")
-
-    if "snr" in selected_df and selected_df["snr"].notna().any():
-        st.markdown("#### SNR")
-        snr_fig = px.scatter(
-            selected_df.dropna(subset=["snr"]),
-            x="datetime_utc",
-            y="snr",
-            color="band",
-            hover_data=["file_name", "freq_mhz", "bandwidth_mhz"],
-            labels={"datetime_utc": "Observation UTC", "snr": "SNR"},
-        )
-        snr_fig.update_layout(height=320, margin=dict(l=10, r=10, t=20, b=10))
-        st.plotly_chart(snr_fig, use_container_width=True)
-
-    st.markdown("#### Files")
-    file_columns = [
-        column
-        for column in [
-            "datetime_utc",
-            "band",
-            "duration_sec",
-            "freq_mhz",
-            "bandwidth_mhz",
-            "mjd",
-            "dm",
-            "period_sec",
-            "file_name",
-            "path",
-        ]
-        if column in selected_df
-    ]
-    st.dataframe(selected_df[file_columns], use_container_width=True, hide_index=True)
+    return pd.DataFrame(values, columns=["field", "value"])
 
 
 def main() -> None:
     page_setup()
     settings = load_settings()
     output_dir = Path(os.getenv("PSRDEX_OUTPUT_DIR", str(settings.output_dir))).expanduser().resolve()
-    update_state = maybe_start_background_update(
-        settings,
-        output_dir,
-        pythonpath_prefix=SRC,
-        cwd=ROOT,
-    )
+    maybe_start_background_update(settings, output_dir, pythonpath_prefix=SRC, cwd=ROOT)
 
     observations = load_observations(str(output_dir))
+
     st.title("PSRDEX")
+    st.markdown('<div class="psrdex-subtitle">Indexing tool for pulsars</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="psrdex-updated">Last updated: {latest_catalog_label(output_dir, observations)}</div>',
+        unsafe_allow_html=True,
+    )
 
     if observations.empty:
         st.warning(f"No catalog found at {output_dir / 'observations.csv'}")
-        st.caption(f"Update {update_state}. Log: {output_dir / 'background_update.log'}")
         return
 
     pulsars = tuple(sorted(observations["pulsar"].dropna().astype(str).unique()))
     atnf = load_atnf(pulsars)
     positions = local_positions(observations, atnf)
 
-    with st.sidebar:
-        st.header("Catalog")
-        st.metric("Pulsars", f"{len(pulsars):,}")
-        st.metric("Files", f"{len(observations):,}")
-        total_hours = observations["duration_sec"].fillna(0).sum() / 3600
-        st.metric("Hours", f"{total_hours:.1f}")
-        st.caption(f"Update {update_state}")
-        selected = st.selectbox("Pulsar", pulsars, index=0 if pulsars else None)
-        bands = sorted(str(band) for band in observations["band"].dropna().unique())
-        active_bands = st.multiselect("Bands", bands, default=bands)
+    plot_left, plot_right = st.columns(2)
+    with plot_left:
+        st.plotly_chart(ppdot_figure(atnf), width="stretch")
+    with plot_right:
+        st.plotly_chart(sky_figure(positions), width="stretch")
 
-    filtered = observations[observations["band"].astype(str).isin(active_bands)] if active_bands else observations
-    filtered_pulsars = tuple(sorted(filtered["pulsar"].dropna().astype(str).unique()))
-    filtered_atnf = atnf[atnf["PSRJ"].isin(filtered_pulsars)] if not atnf.empty and "PSRJ" in atnf else atnf
-    filtered_positions = local_positions(filtered, filtered_atnf)
-
-    top_left, top_right = st.columns(2)
-    with top_left:
-        st.markdown("#### P-Pdot")
-        pp_event = st.plotly_chart(
-            ppdot_figure(filtered_atnf, selected),
-            use_container_width=True,
-            key="ppdot",
-            on_select="rerun",
-            selection_mode="points",
+    selector_left, selector_right = st.columns([2, 1])
+    with selector_left:
+        selected_pulsar = st.selectbox("Pulsar", pulsars, index=0)
+    available_bands = ["All bands"]
+    if "band" in observations:
+        available_bands += sorted(
+            observations["band"].dropna().astype(str).unique(),
+            key=band_sort_key,
         )
-    with top_right:
-        st.markdown("#### Sky")
-        sky_event = st.plotly_chart(
-            sky_figure(filtered_positions, selected),
-            use_container_width=True,
-            key="sky",
-            on_select="rerun",
-            selection_mode="points",
+    with selector_right:
+        selected_band = st.selectbox(
+            "Frequency band",
+            available_bands,
+            index=0,
+            format_func=lambda value: value if value == "All bands" else band_label(value),
         )
 
-    plot_selected = selected_from_plot(pp_event) or selected_from_plot(sky_event)
-    if plot_selected in pulsars:
-        selected = plot_selected
+    selected_df, y_column = filtered_observations(observations, selected_pulsar, selected_band)
+    event = st.plotly_chart(
+        observation_figure(selected_df, y_column),
+        width="stretch",
+        key="observation_snr",
+        on_select="rerun",
+        selection_mode="points",
+    )
 
-    render_selected_pulsar(selected, observations, positions, atnf)
+    row = selected_observation(selected_df, event)
+    st.dataframe(metadata_table(row, atnf), width="stretch", hide_index=True)
 
 
 if __name__ == "__main__":

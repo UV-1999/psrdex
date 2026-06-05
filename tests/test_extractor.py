@@ -5,7 +5,16 @@ from datetime import timezone
 from pathlib import Path
 
 from psrdex.discovery import FileFingerprint
-from psrdex.extractor import build_observation, compute_tbin, get_datetime_utc, infer_band, mjd_to_utc
+from psrdex.extractor import (
+    band_label,
+    build_observation,
+    compute_tbin,
+    get_datetime_utc,
+    infer_band,
+    mjd_to_utc,
+    parse_pdv_profile,
+    profile_snr,
+)
 
 UTC = timezone.utc
 
@@ -21,6 +30,7 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(infer_band(62, 12), "2c")
         self.assertEqual(infer_band(72, 12), "3c")
         self.assertEqual(infer_band(None, 12), "unknown")
+        self.assertEqual(band_label("1b"), "lane1b: HBA 129 MHz (117-141 MHz)")
 
     def test_datetime_prefers_filename(self) -> None:
         path = Path("/tmp/J1234+5678_2025-01-02_03:04:05_test.nop")
@@ -65,6 +75,28 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(row["band"], "0b")
         self.assertEqual(row["duration_sec"], 50)
         self.assertIs(row["dmc"], True)
+
+    def test_profile_snr_uses_lowest_power_segment_as_off_pulse(self) -> None:
+        profile = [1.0] * 100
+        profile[:10] = [0.8, 0.84, 0.89, 0.93, 0.98, 1.02, 1.07, 1.11, 1.16, 1.2]
+        profile[45] = 9.0
+        snr = profile_snr(profile)
+        mu_off = sum(profile[:10]) / len(profile[:10])
+        sigma_off = (sum((value - mu_off) ** 2 for value in profile[:10]) / len(profile[:10])) ** 0.5
+        expected = (9.0 - mu_off) / sigma_off
+        self.assertAlmostEqual(snr or 0, expected)
+
+    def test_parse_pdv_profile_uses_last_numeric_column(self) -> None:
+        profile = parse_pdv_profile(
+            """
+            # bin intensity
+            0 0 0 1.5
+            1 0 0 2.5
+            """
+        )
+        self.assertIsNotNone(profile)
+        assert profile is not None
+        self.assertEqual(profile, [1.5, 2.5])
 
 
 if __name__ == "__main__":

@@ -21,9 +21,15 @@ class UpdateReport:
     exported: dict[str, object]
 
 
-def _process_worker(args: tuple[FileFingerprint, str, int]) -> ExtractionResult:
-    fingerprint, vap_bin, timeout_sec = args
-    return process_file(fingerprint, vap_bin=vap_bin, timeout_sec=timeout_sec)
+def _process_worker(args: tuple[FileFingerprint, str, str, int, bool]) -> ExtractionResult:
+    fingerprint, vap_bin, pdv_bin, timeout_sec, extract_snr = args
+    return process_file(
+        fingerprint,
+        vap_bin=vap_bin,
+        pdv_bin=pdv_bin,
+        timeout_sec=timeout_sec,
+        extract_snr=extract_snr,
+    )
 
 
 def run_update(
@@ -31,13 +37,14 @@ def run_update(
     *,
     retry_failures: bool = False,
     dry_run: bool = False,
+    force: bool = False,
 ) -> UpdateReport:
     settings.ensure_output_dirs()
     LOGGER.info("Scanning %s for %s", settings.data_dir, settings.glob_pattern)
     discovered = discover_files(settings.data_dir, settings.glob_pattern)
 
     with CatalogStore(settings.db_path) as store:
-        pending = store.pending_files(discovered, retry_failures=retry_failures)
+        pending = store.pending_files(discovered, retry_failures=retry_failures, force=force)
         LOGGER.info("Discovered %d files; %d need processing", len(discovered), len(pending))
 
         if dry_run:
@@ -52,7 +59,16 @@ def run_update(
         ok = 0
         failed = 0
         if pending:
-            worker_args = [(fp, settings.vap_bin, settings.vap_timeout_sec) for fp in pending]
+            worker_args = [
+                (
+                    fp,
+                    settings.vap_bin,
+                    settings.pdv_bin,
+                    settings.vap_timeout_sec,
+                    settings.extract_snr,
+                )
+                for fp in pending
+            ]
             max_workers = max(1, settings.max_workers)
             if max_workers == 1:
                 results = (_process_worker(args) for args in worker_args)

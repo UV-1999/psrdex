@@ -36,6 +36,8 @@ pip install -e ".[dev]"
 ```
 
 The pipeline also expects PSRCHIVE's `vap` command to be available on `PATH`.
+For profile-derived SNR, it uses the PSRCHIVE Python bindings when available
+and falls back to PSRCHIVE's `pdv` command.
 
 ## Configuration
 
@@ -47,6 +49,7 @@ export PSRDEX_OUTPUT_DIR=/home/pmarmat/psrdex_catalog
 export PSRDEX_GLOB="*.nop"
 export PSRDEX_MAX_WORKERS=8
 export PSRDEX_VAP_BIN=vap
+export PSRDEX_PDV_BIN=pdv
 ```
 
 These are also the built-in server defaults. The archive directory is only
@@ -63,6 +66,24 @@ export PSRDEX_TELESCOPE_HEIGHT_M=100
 
 Use the actual station coordinates for scientific use.
 
+## Frequency Lanes
+
+PSRDEX displays the observing band using the local lane convention:
+
+```text
+HBA: 117-189 MHz
+lane1b: 129 MHz, 117-141 MHz
+lane2b: 153 MHz, 141-165 MHz
+lane3b: 177 MHz, 165-189 MHz
+lane0b: combined 1b+2b+3b
+
+LBA: 44-80 MHz
+lane1c: 50 MHz, 44-56 MHz
+lane2c: 62 MHz, 56-68 MHz
+lane3c: 74 MHz, 68-80 MHz
+lane0c: combined 1c+2c+3c
+```
+
 ## Run The Incremental Update
 
 ```bash
@@ -75,6 +96,7 @@ Useful variants:
 psrdex-update update --dry-run
 psrdex-update update --workers 4
 psrdex-update update --retry-failures
+psrdex-update update --force
 psrdex-update export
 psrdex-update status
 ```
@@ -174,8 +196,11 @@ systemd on the server.
 
 - Failed files are recorded and skipped on future runs unless their fingerprint
   changes or `--retry-failures` is used.
-- The current extractor records metadata available from `vap`. SNR is represented
-  as an optional column for future extension, because SNR extraction is often
-  project-specific.
+- The extractor records archive metadata available from `vap`. SNR is computed
+  from the integrated pulse profile, not from the archive header: the profile is
+  split into 10 phase-bin segments, the segment with the lowest mean power is
+  treated as off-pulse, and SNR is `(I_max - mu_off) / sigma_off`. If an old
+  catalog was built before this SNR extraction was enabled, run
+  `psrdex-update update --force` to backfill it.
 - Per-pulsar CSVs are exported from SQLite, so modified files replace their old
   metadata cleanly instead of causing duplicate rows.

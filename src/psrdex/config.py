@@ -25,6 +25,13 @@ def _get_optional_float(name: str) -> float | None:
         raise ValueError(f"{name} must be a number, got {raw!r}") from exc
 
 
+def _get_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
@@ -32,7 +39,9 @@ class Settings:
     glob_pattern: str = "*.nop"
     max_workers: int = 8
     vap_bin: str = "vap"
+    pdv_bin: str = "pdv"
     vap_timeout_sec: int = 120
+    extract_snr: bool = True
     telescope_lat_deg: float | None = None
     telescope_lon_deg: float | None = None
     telescope_height_m: float | None = None
@@ -69,6 +78,7 @@ class Settings:
         glob_pattern: str | None = None,
         max_workers: int | None = None,
         vap_bin: str | None = None,
+        pdv_bin: str | None = None,
     ) -> "Settings":
         return replace(
             self,
@@ -77,6 +87,7 @@ class Settings:
             glob_pattern=glob_pattern or self.glob_pattern,
             max_workers=max_workers or self.max_workers,
             vap_bin=vap_bin or self.vap_bin,
+            pdv_bin=pdv_bin or self.pdv_bin,
         )
 
 
@@ -90,7 +101,9 @@ def load_settings() -> Settings:
         glob_pattern=os.getenv("PSRDEX_GLOB", "*.nop"),
         max_workers=_get_int("PSRDEX_MAX_WORKERS", workers_default),
         vap_bin=os.getenv("PSRDEX_VAP_BIN", "vap"),
+        pdv_bin=os.getenv("PSRDEX_PDV_BIN", "pdv"),
         vap_timeout_sec=_get_int("PSRDEX_VAP_TIMEOUT_SEC", 120),
+        extract_snr=_get_bool("PSRDEX_EXTRACT_SNR", True),
         telescope_lat_deg=_get_optional_float("PSRDEX_TELESCOPE_LAT_DEG"),
         telescope_lon_deg=_get_optional_float("PSRDEX_TELESCOPE_LON_DEG"),
         telescope_height_m=_get_optional_float("PSRDEX_TELESCOPE_HEIGHT_M"),
