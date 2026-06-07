@@ -269,7 +269,8 @@ def re_split_angle(text: str) -> list[str]:
     )
     parts = [part for part in cleaned.replace(" ", ":").split(":") if part]
     try:
-        [float(part) for part in parts]
+        for part in parts:
+            float(part)
     except ValueError:
         return []
     return parts
