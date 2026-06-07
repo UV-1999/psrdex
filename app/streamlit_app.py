@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,8 +31,6 @@ except Exception:  # pragma: no cover - app handles missing optional runtime dep
 
 ATNF_PARAMS = [
     "PSRJ",
-    "RAJ",
-    "DECJ",
     "P0",
     "P1",
     "DM",
@@ -167,23 +168,81 @@ def load_observations(output_dir: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def load_atnf(pulsars: tuple[str, ...]) -> pd.DataFrame:
-    if QueryATNF is None or not pulsars:
+    atnf_pulsars = tuple(pulsar for pulsar in pulsars if re.match(r"^J\d{4}[+-]\d+", pulsar))
+    if QueryATNF is None or not atnf_pulsars:
         return pd.DataFrame()
     try:
-        query = QueryATNF(params=ATNF_PARAMS, psrs=list(pulsars))
-        table = query.pandas
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            query = QueryATNF(params=ATNF_PARAMS, psrs=list(atnf_pulsars))
+            table = query.pandas
     except Exception:
         return pd.DataFrame()
     if table is None:
         return pd.DataFrame()
 
     df = table.copy()
+    for column in df.columns:
+        df[column] = df[column].map(scalar_display_value)
     if "PSRJ" in df:
         df["PSRJ"] = df["PSRJ"].astype(str)
     for column in ["P0", "P1", "DM", "DIST", "AGE", "EDOT"]:
         if column in df:
             df[column] = pd.to_numeric(df[column], errors="coerce")
     return df
+
+
+def scalar_display_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    if hasattr(value, "to_string"):
+        try:
+            rendered = value.to_string(sep=":", precision=8)
+            if not isinstance(rendered, (list, tuple, np.ndarray)):
+                return str(rendered)
+            value = rendered
+        except Exception:
+            pass
+
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (list, tuple)):
+        flattened = flatten_for_display(value)
+        if len(flattened) <= 4:
+            return ":".join(flattened)
+        return ", ".join(flattened)
+
+    return str(value).replace("\n", " ")
+
+
+def metadata_display_value(value: Any) -> str:
+    value = scalar_display_value(value)
+    if value is None:
+        return ""
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%Y-%m-%d %H:%M:%S UTC")
+    if isinstance(value, float):
+        return f"{value:.8g}"
+    return str(value).replace("\n", " ")
+
+
+def flatten_for_display(value: Any) -> list[str]:
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (list, tuple)):
+        flattened: list[str] = []
+        for item in value:
+            flattened.extend(flatten_for_display(item))
+        return flattened
+    text = str(value).strip()
+    return [text] if text else []
 
 
 def latest_catalog_label(output_dir: Path, observations: pd.DataFrame) -> str:
@@ -292,6 +351,16 @@ def ppdot_figure(atnf: pd.DataFrame) -> go.Figure:
             log_y=True,
             color_discrete_sequence=["#2f6f9f"],
             labels={"P0": "Period P (s)", "P1": "Pdot (s/s)"},
+        )
+    else:
+        fig.add_annotation(
+            text="ATNF P/Pdot unavailable",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font=dict(color="#667085", size=14),
         )
     fig.update_layout(
         title="P-Pdot Diagram",
@@ -462,6 +531,8 @@ def metadata_table(row: pd.Series | None, atnf: pd.DataFrame) -> pd.DataFrame:
         ("Pulsar", "pulsar"),
         ("File name", "file_name"),
         ("Datetime UTC", "datetime_utc"),
+        ("RA", "ra"),
+        ("DEC", "dec"),
         ("Frequency band", "band_label"),
         ("Total SNR", "snr_for_plot"),
         ("DM", "dm"),
@@ -475,7 +546,7 @@ def metadata_table(row: pd.Series | None, atnf: pd.DataFrame) -> pd.DataFrame:
         if column in row.index:
             value = row[column]
             if pd.notna(value):
-                values.append((label, value))
+                values.append((label, metadata_display_value(value)))
 
     band = str(row.get("band")) if "band" in row.index else ""
     info = BAND_INFO.get(band)
@@ -497,13 +568,11 @@ def metadata_table(row: pd.Series | None, atnf: pd.DataFrame) -> pd.DataFrame:
             ("ATNF DM", "DM"),
             ("ATNF Period P0", "P0"),
             ("ATNF Pdot P1", "P1"),
-            ("ATNF RAJ", "RAJ"),
-            ("ATNF DECJ", "DECJ"),
             ("ATNF Distance", "DIST"),
             ("ATNF Age", "AGE"),
         ]:
             if column in atnf_row.index and pd.notna(atnf_row[column]):
-                values.append((label, atnf_row[column]))
+                values.append((label, metadata_display_value(atnf_row[column])))
 
     return pd.DataFrame(values, columns=["field", "value"])
 

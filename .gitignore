@@ -10,3 +10,4 @@ psrdex_catalog/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.egg-info/
