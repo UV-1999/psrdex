@@ -1,0 +1,490 @@
+PSRDEX PROJECT BRIEF FOR REFINEMENT
+
+This document describes the PSRDEX project as currently understood, with enough
+scientific and implementation detail to use as a prompt for refining the next
+development stage. The goal is not to write code here, but to define the problem
+clearly so that the next implementation plan can be made precise.
+
+
+1. SERVER DATA STORAGE, PULSAR ARCHIVE CONTENT, FILE ORGANIZATION, AND CSV CATALOG GENERATION
+
+1. PSRDEX is being built for a shared remote server used by a pulsar-observing
+   team. The scientific data consist of pulsar observation archive files, mainly
+   PSRCHIVE-readable files with the extension ".nop".
+
+2. The archive files are stored in a fixed data directory on the server. The
+   current default data directory is:
+   /QNAP/LOFAR/PL611
+
+3. The data directory is not static. New pulsar observation files are written to
+   this location over time. The cadence is irregular: sometimes new files arrive
+   weekly, sometimes monthly, depending on the observing schedule and data
+   transfer.
+
+4. The archive is already large. The first real server test discovered about
+   16,900 matching ".nop" files. This makes a naive script that reprocesses
+   every file on every run scientifically and operationally inefficient.
+
+5. The old workflow was a one-shot script that scanned all archive files and
+   produced CSV metadata. That was acceptable when the dataset was static, but it
+   fails as a long-term strategy for an ever-growing archive because every
+   update would repeat work for thousands of unchanged files.
+
+6. PSRDEX therefore uses an incremental metadata pipeline. The command-line tool
+   is called:
+   psrdex-update
+
+7. The normal command is:
+   psrdex-update update
+
+8. The update command scans the archive directory using the configured glob
+   pattern. The current default glob is:
+   *.nop
+
+9. The update command does not modify the original pulsar archive files. It only
+   reads them. This is essential because the archive files are scientific raw or
+   processed observation products and must not be changed by the indexing
+   dashboard.
+
+10. For each discovered file, PSRDEX records a file fingerprint consisting of
+    the file path, file size, and modification time. These fingerprints allow
+    PSRDEX to decide whether a file is new, changed, already processed, or
+    previously failed.
+
+11. The canonical state store is an SQLite database stored under the PSRDEX
+    output directory. The server default output directory is:
+    /home/pmarmat/psrdex_catalog
+
+12. The SQLite database path is:
+    /home/pmarmat/psrdex_catalog/psrdex.sqlite
+
+13. The SQLite database has a processed-file manifest and an observation table.
+    This makes the catalog robust to repeated runs: unchanged files are skipped,
+    changed files replace their old metadata, and failed files are recorded.
+
+14. The important output CSV files are exported from SQLite after an update:
+    observations.csv: one row per processed observation file.
+    pulsar_summary.csv: one summary row per pulsar.
+    pulsars/<PSRJ>.csv: one per-pulsar CSV file containing all observations of that pulsar.
+    failures.csv: files that could not be processed and their errors.
+    background_update.log: logs from Streamlit-triggered background updates.
+
+15. The per-pulsar CSV directory is:
+    /home/pmarmat/psrdex_catalog/pulsars/
+
+16. This per-pulsar CSV layout is important for dashboard use. The app can load
+    a complete global table when needed, but it can also reason about each pulsar
+    as a separate scientific object with its own observation history.
+
+17. PSRDEX extracts metadata using PSRCHIVE command-line tools. The main
+    metadata command is "vap". Profile-derived SNR uses the PSRCHIVE Python
+    bindings when available and falls back to "pdv" when needed.
+
+18. The current metadata extracted per archive includes, among other fields:
+    path, file_name, file_size_bytes, file_mtime_ns, pulsar, datetime_utc, MJD,
+    RA, DEC, observing band, center frequency, bandwidth, number of
+    subintegrations, number of channels, number of phase bins, number of
+    polarizations, time-bin size, subintegration length, total duration, period,
+    DM, dedispersion correction flag, SNR, and processing timestamp.
+
+19. The pulsar name is taken from PSRCHIVE metadata when available. If the
+    archive metadata does not provide a name, PSRDEX falls back to a filename
+    pattern of the form:
+    J####+####_YYYY-MM-DD_HH:MM:SS
+    or
+    J####-####_YYYY-MM-DD_HH:MM:SS
+
+20. The observation time is also inferred carefully. Filename date/time is
+    preferred when present, then PSRCHIVE start date/time metadata, then MJD.
+    This matters because the dashboard uses observation time as the x-axis for
+    per-pulsar monitoring.
+
+21. The scientific frequency-lane convention is part of the catalog and
+    dashboard. HBA observations cover approximately 117-189 MHz:
+    lane1b: 129 MHz, 117-141 MHz.
+    lane2b: 153 MHz, 141-165 MHz.
+    lane3b: 177 MHz, 165-189 MHz.
+    lane0b: combined bandwidth of lane1b, lane2b, and lane3b.
+
+22. LBA observations cover approximately 44-80 MHz:
+    lane1c: 50 MHz, 44-56 MHz.
+    lane2c: 62 MHz, 56-68 MHz.
+    lane3c: 74 MHz, 68-80 MHz.
+    lane0c: combined bandwidth of lane1c, lane2c, and lane3c.
+
+23. The lane label is inferred from center frequency and bandwidth. This lets
+    users compare observations in scientifically meaningful frequency ranges,
+    instead of treating frequency as an arbitrary numeric column.
+
+24. PSRDEX currently computes SNR from the integrated pulse profile rather than
+    trusting the archive header SNR. The algorithm is:
+    divide the integrated flux-versus-phase profile into 10 equal phase segments;
+    compute the mean power in each segment;
+    treat the segment with the lowest mean power as the off-pulse region;
+    compute the off-pulse mean mu_off and standard deviation sigma_off;
+    take I_max as the maximum profile intensity over the full pulse profile;
+    compute SNR as (I_max - mu_off) / sigma_off.
+
+25. This SNR definition is important because it gives a consistent measurement
+    across archives and is directly tied to the observed pulse profile. It is a
+    simple first-pass detection-quality metric for dashboard visualization.
+
+26. The first full update is expected to be slow because every existing archive
+    must be read. Later updates should be much faster because only new or
+    changed files are processed.
+
+27. The update command supports useful modes:
+    psrdex-update update: process new or changed files.
+    psrdex-update update --dry-run: report pending files without processing.
+    psrdex-update update --workers N: control parallel workers.
+    psrdex-update update --retry-failures: retry unchanged files that failed.
+    psrdex-update update --force: reprocess every discovered file.
+    psrdex-update export: re-export CSVs from SQLite.
+    psrdex-update status: print manifest and observation counts.
+
+28. The "--force" option is scientifically useful when the extraction algorithm
+    changes, for example when the profile-derived SNR calculation was added.
+    However, it should be used carefully because it reprocesses all ~16,000+
+    files.
+
+29. The update command can be run manually, through a weekly systemd timer, or
+    as a background task launched by the Streamlit app. The Streamlit-triggered
+    update is non-blocking so the dashboard can immediately show whatever CSV
+    data already exists.
+
+30. The dashboard should never wait for a full archive scan before becoming
+    useful. Its scientific role is to expose the best currently indexed view of
+    the archive while the background update improves completeness.
+
+
+2. DESIRED DASHBOARD FUNCTIONALITY AND CURRENT DESIGN STATUS
+
+1. The dashboard is intended to be a "Pokedex for pulsars": a browser that lets
+   a researcher quickly ask, for any pulsar in the local archive, what data
+   exist, in which observing bands, across which epochs, with what SNR and
+   metadata, and how that pulsar sits in the broader pulsar population.
+
+2. The dashboard is a Streamlit web app intended to run on the remote server.
+   Users connected to the same LAN can open the dashboard in a browser using the
+   server address and Streamlit port.
+
+3. The dashboard reads CSV files produced by psrdex-update. It does not read or
+   modify archive files directly during ordinary browsing.
+
+4. The top of the dashboard should show:
+   Title: PSRDEX.
+   Subtitle: Indexing tool for pulsars.
+   Last updated: timestamp derived from the catalog processing time or CSV file modification time.
+
+5. The dashboard currently has a scientific overview layout rather than a
+   marketing-style landing page. The first screen is meant to be immediately
+   useful for data inspection.
+
+6. The dashboard currently displays metric cards summarizing the local catalog:
+   number of pulsars, number of indexed files, total observing hours, number of
+   frequency bands/lanes, and number of ATNF matches used for P-Pdot context.
+
+7. The dashboard uses psrqpy to query the ATNF pulsar catalog. The ATNF metadata
+   are used for scientific context, especially period P, period derivative Pdot,
+   DM, distance, age, and spin-down energy when available.
+
+8. The P-Pdot diagram is a key population-context plot. It places the locally
+   observed pulsars onto the standard pulsar period-period derivative plane when
+   ATNF P and Pdot are available. This helps users understand whether their local
+   archive contains ordinary pulsars, recycled pulsars, young energetic pulsars,
+   or unusual systems.
+
+9. The dashboard also shows a 3D equatorial-sky plot using Plotly. The points
+   represent pulsar positions on a celestial sphere using RA and DEC. This helps
+   users understand sky coverage and source distribution.
+
+10. The sky plot currently uses a grey-tinted sphere, grid/boundary lines, and
+    visible axes so that the geometry is easier to see against the page
+    background.
+
+11. The sky positions are currently derived from local catalog RA/DEC values.
+    ATNF is still required for the P-Pdot diagram and source metadata, but the
+    local archive coordinates are used for sky placement when available.
+
+12. The main dashboard has two top-level plots side by side:
+    left: P-Pdot diagram;
+    right: 3D equatorial celestial sphere.
+
+13. Below the overview plots, the dashboard has a pulsar selector. The user can
+    choose a specific pulsar from a dropdown menu.
+
+14. Once a pulsar is selected, the dashboard shows all observations for that
+    pulsar as a time-series scatter plot. The x-axis is observation time and the
+    y-axis is total SNR from the PSRDEX profile-derived SNR column.
+
+15. The observation scatter plot is scientifically useful because it reveals
+    whether the pulsar has many epochs, whether the SNR changes over time, and
+    whether some frequency lanes are systematically stronger or weaker.
+
+16. Frequency lanes are now controlled using checkboxes below the observation
+    plot, rather than relying on Plotly's click-on-legend behavior. This is more
+    explicit and more suitable for scientific filtering.
+
+17. The lane checkboxes correspond to the local LOFAR-style HBA/LBA lane
+    definitions. Toggling lanes changes which observations are plotted.
+
+18. Beneath the lane checkboxes, the dashboard shows a lane summary table. The
+    current intention is that this table reports, for each selected lane:
+    lane label, receiver type, number of files, total hours, maximum SNR, and
+    latest observation date.
+
+19. When the user clicks an observation point in the scatter plot, the dashboard
+    should update a metadata table at the bottom of the page. The table should
+    show the selected file name, SNR, DM, period, MJD, UTC datetime, RA, DEC,
+    frequency, bandwidth, duration, archive path, and relevant ATNF metadata.
+
+20. The dashboard should not depend on hover boxes for scientific details.
+    Hover boxes are temporary and easy to miss. The selected observation should
+    have persistent details in a proper Streamlit element/table.
+
+21. The current design has intentionally muted colors. The page background was
+    dimmed from the default bright white. Plot backgrounds were adjusted to
+    match the page palette while preserving axis/grid visibility.
+
+22. Input fields such as dropdowns should have strong color contrast. The text
+    inside them must remain readable against the field background.
+
+23. The table colors should match the rest of the page. The current metadata
+    table is intended to use a controlled HTML/CSS style so it does not look like
+    a default bright-white dataframe pasted onto a muted scientific dashboard.
+
+24. The sidebar is currently not important and can remain empty until there are
+    real global controls to place there.
+
+25. The dashboard had an earlier bug where coordinate arrays/lists were printed
+    under the PSRDEX title. The root cause was a bare expression inside the
+    angle parsing function. That was fixed by turning validation into a normal
+    loop with no Streamlit-visible expression.
+
+26. The dashboard had Streamlit deprecation warnings for use_container_width.
+    The current direction is to use width="stretch" instead.
+
+27. The app must suppress useless debug output from ATNF/coordinate conversion
+    in the Streamlit frontend. ATNF queries are required, but their internal
+    representation should never be printed into the app.
+
+28. The dashboard currently prioritizes scientific usability:
+    clear title and update timestamp;
+    immediate catalog-level context;
+    population and sky-location plots;
+    source-level observation timeline;
+    lane filtering;
+    persistent selected-observation metadata.
+
+29. The next design stage should preserve scientific accuracy and visibility.
+    The goal is not decorative polish alone; every UI element should help users
+    answer a scientific archive question faster.
+
+30. Future desired dashboard functions include:
+    selection of one or more observation files for deeper analysis;
+    displaying plots generated by external analysis tools;
+    showing logs and output products from server-side jobs;
+    comparing multiple epochs for the same pulsar;
+    making it clear which products come from PSRDEX metadata and which come from
+    deeper PSRISM analysis.
+
+
+3. PSRISM USAGE AND THE SPECIFIC FUTURE INTEGRATION GOAL FOR PSRDEX
+
+1. There is already a Python command-line package named PSRISM on this machine
+   at:
+   /home/piyushmarmat/PhD/PSRISM/psrism/
+
+2. PSRISM is a command-line Python package for pulsar interstellar-medium
+   analysis from PSRCHIVE-readable archive files. It uses PSRCHIVE for archive
+   I/O and scientific Python tools for analysis, fitting, and plotting.
+
+3. Scientifically, PSRISM takes a pulsar archive and produces deeper propagation
+   and profile-analysis products than PSRDEX currently computes. These include:
+   dynamic spectra, autocorrelation spectra, secondary spectra, integrated pulse
+   profiles, scattering timescale tau, scattering spectral index alpha,
+   scintillation bandwidths, scintillation timescales, refractive scintillation
+   estimates, anisotropic pulse-broadening fits, and time-series plots.
+
+4. PSRISM can be installed in editable mode from its package directory using
+   pip, and the basic command-line interface is:
+   psrism --help
+
+5. The simplest single-archive usage is:
+   psrism ARCHIVE
+   With only an archive specified, PSRISM loads the archive, reports metadata,
+   applies its default preprocessing, and does not make plots unless plotting or
+   fitting flags are requested.
+
+6. The basic preprocessing includes loading with psrchive.Archive_load,
+   dedispersion, polarization scrunching, and optional user-specified choices
+   for --dm, --nsub, --nchan, and --nbin.
+
+7. PSRISM has an inspect mode:
+   psrism ARCHIVE --inspect
+   This reports valid scrunching targets for --nsub, --nchan, and --nbin. This
+   is important because PSRCHIVE scrunch targets must divide the current archive
+   dimensions exactly.
+
+8. PSRISM dynamic-spectrum mode is:
+   psrism ARCHIVE --dspec
+   This creates a dynamic spectrum showing pulse intensity versus observing time
+   and radio frequency. It is the primary data product for scintillation
+   analysis.
+
+9. PSRISM autocorrelation-spectrum mode is:
+   psrism ARCHIVE --acspec
+   This computes the autocorrelation of the dynamic spectrum and estimates
+   decorrelation bandwidth and diffractive scintillation timescale.
+
+10. A zoomed ACF view can be requested with:
+    psrism ARCHIVE --acspec --zoom-acf
+
+11. PSRISM secondary-spectrum mode is:
+    psrism ARCHIVE --sspec
+    This computes the squared magnitude of the two-dimensional Fourier transform
+    of the mean-subtracted dynamic spectrum.
+
+12. Secondary-spectrum parabolic-arc fitting can be requested with:
+    psrism ARCHIVE --sspec --fit-arc
+    This searches for and overlays scintillation arc curvature.
+
+13. PSRISM integrated-profile mode is:
+    psrism ARCHIVE --intpf
+    This plots the integrated pulse profile and fits a scatter-broadened pulse
+    model.
+
+14. A scattering-timescale fit can also be requested with:
+    psrism ARCHIVE --fit-tau
+
+15. Frequency scaling of scattering can be measured with:
+    psrism ARCHIVE --fit-alpha --tau-subbands 4
+    This divides the bandwidth into subbands, fits tau in each subband, and fits
+    tau(nu) proportional to nu^alpha.
+
+16. An optional reference frequency can be supplied:
+    psrism ARCHIVE --fit-alpha --tau-subbands 4 --tau-reference-freq 150
+
+17. PSRISM has an anisotropic pulse-broadening mode:
+    psrism ARCHIVE --fit-anisotropy --tau-subbands 4
+    This fits anisotropic broadening parameters tau_x, tau_y, tau_eff, and a
+    tau_ratio diagnostic.
+
+18. PSRISM can estimate refractive quantities from tau with:
+    psrism ARCHIVE --estimate-refractive --tau-subbands 4
+    If distance and transverse velocity are supplied, it can estimate
+    diffractive timescale, refractive timescale, number of scintles, and
+    finite-scintle uncertainty.
+
+19. A more complete refractive estimate can be requested with:
+    psrism ARCHIVE --estimate-refractive --tau-subbands 4 --distance-kpc 1.0 --velocity-kms 100
+
+20. PSRISM can also run on a directory instead of a single archive. In this
+    mode, it treats the directory as a chronological set of archives for one
+    pulsar and makes parameter-versus-time products.
+
+21. Directory time-series usage looks like:
+    psrism /path/to/pulsar_directory --time-params all --nsub 70 --nchan 61 --nbin 256 --tau-subbands 4
+
+22. The supported time-series parameter names are:
+    dm: dispersion measure from archive metadata.
+    tau: integrated-profile scattering timescale.
+    alpha: scattering spectral index from subband tau fits.
+    dnu_d: ACF decorrelation bandwidth.
+    dt_d: ACF diffractive scintillation timescale.
+    t_r: refractive scintillation timescale inferred from ACF quantities.
+    all: all of the above.
+
+23. Directory mode can be restricted with --time-pattern, for example to analyze
+    only selected epochs or selected archive names from a directory.
+
+24. PSRISM writes outputs into a folder named after the pulsar in the current
+    working directory. For single-archive runs, outputs include a terminal log
+    and plot files such as:
+    *_dspec.png
+    *_acspec.png
+    *_acspec_zoom.png
+    *_sspec.png
+    *_intpf.png
+    *_tau_fit.png
+    *_tau_vs_freq.png
+    *_subband_tau_fits.png
+    *_anisotropic_tau_eff_vs_freq.png
+
+25. For directory time-series runs, PSRISM writes products such as:
+    *_time_series_terminal_output.txt
+    *_time_series.csv
+    *_time_series_dm_vs_time.png
+    *_time_series_tau_vs_time.png
+    and related plots for requested parameters.
+
+26. The future PSRDEX goal is to connect the dashboard to PSRISM safely and
+    usefully. When a user selects a pulsar in PSRDEX, they should be able to
+    select one observation file, or multiple epochs/files, and launch a PSRISM
+    analysis from the dashboard.
+
+27. For a single selected observation, PSRDEX should run PSRISM on the selected
+    archive path with user-chosen analysis flags. For example, the user may want
+    dynamic spectrum, ACF, secondary spectrum, integrated profile, tau fit,
+    alpha fit, anisotropic fit, or refractive estimates.
+
+28. For multiple selected observations of the same pulsar, PSRDEX should support
+    a multi-epoch analysis. This could use PSRISM directory time-series mode, or
+    a PSRDEX-created temporary working directory containing symlinks to exactly
+    the selected archive files, so that PSRISM analyzes only those epochs.
+
+29. PSRDEX should not modify original archive files while launching PSRISM. All
+    PSRISM output products should be written to a dedicated analysis-output
+    directory, for example under:
+    /home/pmarmat/psrdex_catalog/psrism_runs/
+
+30. Each PSRISM run should have a unique run directory containing:
+    selected input archive paths;
+    command-line options used;
+    terminal output log;
+    generated PNG plots;
+    generated CSV files;
+    run status such as queued/running/succeeded/failed;
+    start and end timestamps.
+
+31. The Streamlit dashboard should expose this as a controlled job workflow,
+    not as arbitrary shell access. The UI should let users choose from safe,
+    whitelisted PSRISM options rather than typing unrestricted commands.
+
+32. The dashboard should show job progress and the PSRISM terminal log, because
+    PSRISM prints scientifically important quantities such as tau, alpha,
+    decorrelation bandwidth, diffractive timescale, arc curvature, fit quality,
+    and warnings.
+
+33. After a PSRISM run finishes, PSRDEX should discover the generated output
+    files and display them in proper Streamlit elements:
+    images for PNG plots;
+    dataframes for CSV time-series tables;
+    text/log panels for terminal-output summaries.
+
+34. The selected-observation metadata table in PSRDEX should be linked to the
+    analysis action. A user should be able to click a point in the observation
+    SNR timeline, inspect its metadata, then launch PSRISM for that exact file.
+
+35. For multi-epoch analysis, the user should be able to select multiple points
+    or rows for a single pulsar, then run PSRISM time-series analysis across
+    those selected epochs.
+
+36. The dashboard should clearly separate the two analysis levels:
+    PSRDEX metadata indexing: fast, incremental, always available from CSVs.
+    PSRISM physical analysis: slower, user-triggered, archive-level or
+    multi-epoch, producing plots and fitted propagation parameters.
+
+37. The final desired workflow is:
+    open PSRDEX in the browser;
+    choose a pulsar;
+    inspect archive coverage, bands, hours, SNR, and ATNF metadata;
+    choose one observation or multiple epochs;
+    choose PSRISM products to generate;
+    launch the server-side PSRISM job;
+    monitor logs/status in the dashboard;
+    view generated plots and tables in the dashboard;
+    compare results across epochs when multiple archives are selected.
+
+38. This integration would make PSRDEX not only an archive index, but also a
+    launchpad for reproducible pulsar interstellar-medium analysis.

@@ -1,11 +1,27 @@
 # PSRDEX
 
-PSRDEX is an incremental metadata pipeline and Streamlit browser for pulsar
-observation archives. It is designed for a shared server where pulsar archive
-files keep arriving in a fixed data directory and researchers need a lightweight
-web interface for exploring what has already been observed.
+PSRDEX is a pulsar archive index and dashboard. It is designed for a shared
+server where PSRCHIVE-readable pulsar archive files keep arriving in a fixed
+data directory and researchers need a practical browser for discovering what has
+already been observed.
 
-The project has two parts:
+PSRDEX has two jobs:
+
+- **Index the local pulsar archive incrementally.** It scans new or changed
+  observation files, extracts metadata, stores canonical state in SQLite, and
+  exports CSV catalogs for dashboard use.
+- **Provide a GUI analysis launchpad.** The dashboard lets researchers inspect
+  pulsar coverage, select observations, and launch deeper PSRISM
+  interstellar-medium analysis jobs from a controlled web interface.
+
+This repository contains the original Python indexing package and Streamlit
+dashboard. A React/FastAPI dashboard refactor is being developed separately at:
+
+```text
+/home/piyushmarmat/PhD/PSRDEX/dashboard
+```
+
+The current project has these main parts:
 
 - `psrdex-update`: a background-friendly command that scans the archive tree,
   extracts metadata from new or changed files using PSRCHIVE `vap`, stores the
@@ -15,6 +31,121 @@ The project has two parts:
   plots and per-pulsar summaries. By default, the app also starts an incremental
   update in the background when it launches, then immediately displays whatever
   CSV data already exists.
+- `/home/piyushmarmat/PhD/PSRDEX/dashboard/backend`: a FastAPI backend for the React
+  dashboard.
+- `/home/piyushmarmat/PhD/PSRDEX/dashboard/frontend`: a Vite React dashboard with a
+  GUI PSRISM analysis workflow.
+
+## What PSRDEX Does
+
+PSRDEX is meant to answer common archive questions quickly:
+
+- Which pulsars exist in the local archive?
+- How many indexed observation files are available for each pulsar?
+- Which LOFAR-style observing lanes and frequency bands are present?
+- Across which epochs was a pulsar observed?
+- What are the SNR, DM, period, MJD, UTC datetime, RA/DEC, frequency,
+  bandwidth, duration, and archive path for each observation?
+- Which files should be selected for deeper PSRISM analysis?
+- What plots, logs, and tables did a PSRISM run produce?
+
+The indexing layer does not modify science archive files. It reads them,
+extracts metadata, records a file fingerprint, and writes catalog products under
+`PSRDEX_OUTPUT_DIR`.
+
+## Available Features
+
+### Incremental Catalog Pipeline
+
+- Scans a configured archive directory, defaulting to `/QNAP/LOFAR/PL611`.
+- Supports configurable archive glob patterns, defaulting to `*.nop`.
+- Tracks processed files by path, size, and modification time.
+- Processes only new or changed files on normal updates.
+- Records failures and can retry them with `--retry-failures`.
+- Can reprocess the full archive with `--force` when extraction logic changes.
+- Stores canonical state in SQLite.
+- Exports dashboard-friendly CSV files:
+  - `observations.csv`;
+  - `pulsar_summary.csv`;
+  - `pulsars/<PSRJ>.csv`;
+  - `failures.csv`.
+- Extracts archive metadata through PSRCHIVE tools.
+- Computes a profile-derived SNR from the integrated pulse profile.
+
+### Streamlit Dashboard
+
+- Loads exported PSRDEX CSV catalogs.
+- Shows catalog-level metrics such as pulsar count, file count, exposure time,
+  observing lanes, and update timestamp.
+- Shows scientific overview plots, including P-Pdot context and sky-position
+  views when supporting metadata are available.
+- Provides per-pulsar observation timelines.
+- Filters observations by frequency lane.
+- Shows persistent selected-observation metadata instead of relying only on
+  hover text.
+- Can trigger a non-blocking background `psrdex-update` run at app startup.
+
+### React/FastAPI Dashboard
+
+The React/FastAPI refactor in `/home/piyushmarmat/PhD/PSRDEX/dashboard` adds:
+
+- FastAPI endpoints for catalog overview, pulsar lists, per-pulsar observations,
+  catalog updates, PSRISM runs, and generated run files.
+- A Vite React frontend adapted from the PulsarPReSPIDAR React template.
+- Plotly-based observation timelines.
+- Multi-observation selection from plots and tables.
+- A proper PSRISM configuration window.
+- PSRISM run history and status polling.
+- Dashboard display of generated PSRISM plots, CSV files, text outputs, and log
+  tails.
+
+### PSRISM Integration
+
+PSRISM is a command-line Python package for pulsar interstellar-medium analysis
+from PSRCHIVE-readable archive files. PSRDEX does not reimplement PSRISM; it
+calls the installed `psrism` command through a controlled backend workflow.
+
+PSRISM can generate products such as:
+
+- dynamic spectra;
+- autocorrelation spectra;
+- zoomed autocorrelation spectra;
+- secondary spectra;
+- secondary-spectrum parabolic arc fits;
+- integrated pulse profiles;
+- scattering timescale `tau` fits;
+- scattering spectral index `alpha` fits;
+- anisotropic pulse-broadening fits;
+- refractive scintillation estimates;
+- directory-based time-series products.
+
+The React GUI exposes safe PSRISM options including:
+
+- `--inspect`;
+- `--dspec`;
+- `--acspec`;
+- `--zoom-acf`;
+- `--sspec`;
+- `--fit-arc`;
+- `--intpf`;
+- `--fit-tau`;
+- `--fit-alpha`;
+- `--fit-anisotropy`;
+- `--estimate-refractive`;
+- `--nsub`, `--nchan`, `--nbin`;
+- `--tau-subbands`;
+- `--distance-kpc`;
+- `--velocity-kms`;
+- `--time-params`.
+
+Every dashboard-launched PSRISM run is written under:
+
+```text
+$PSRDEX_OUTPUT_DIR/psrism_runs/
+```
+
+Each run records selected archive paths, command options, terminal output, plot
+files, CSV files, and run metadata. Original archive files are not modified.
 
 ## Repository Layout
 
