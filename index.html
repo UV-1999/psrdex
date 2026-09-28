@@ -7,75 +7,58 @@
   <meta name="description" content="Browse and analyse POLFAR pulsar observations with PSRDEX. Access requires permission to use the Kopernik server; connect on the institute LAN or through SSH.">
   <meta name="color-scheme" content="light dark">
   <link rel="icon" href="./psrdex.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Karma:wght@400;600;700&display=swap" rel="stylesheet">
-  <script>try { if (localStorage.getItem('preferred-theme') === 'dark') document.documentElement.dataset.theme = 'dark'; } catch {}</script>
+  <!-- Shared website assets: typography, navigation, footer and theme behavior. -->
+  <link href="https://fonts.googleapis.com/css?family=Karma" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <script>try { if (localStorage.getItem('preferred-theme') === 'dark') document.documentElement.classList.add('dark-mode-preload'); } catch {}</script>
+  <link rel="stylesheet" href="https://uv-1999.github.io/main.css">
   <style>
-    :root { --bg:#fff8e7; --text:#161616; --muted:#4b4b4b; --heading:#60502e; --link:#ad1414; --border:rgba(96,80,46,.38); --box:#faf1dc; --hover:rgba(173,20,20,.08); --footer:#e2cfa1; color-scheme:light; }
-    :root[data-theme=dark] { --bg:#121212; --text:#eee; --muted:#b8b8b8; --heading:#fff; --link:#74b9ff; --border:rgba(238,238,238,.24); --box:#1b1b1b; --hover:rgba(116,185,255,.12); --footer:linear-gradient(180deg,#121212 0%,#17213d 38%,#31245a 70%,#651c42 100%); color-scheme:dark; }
-    * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--text); font:18px/1.6 'Karma',Georgia,serif; }
-    a { color:var(--link); text-underline-offset:5px; text-decoration-thickness:1px; }
-    a:hover { background:var(--hover); }
-    button { font:inherit; color:inherit; cursor:pointer; }
-    :focus-visible { outline:2px solid var(--link); outline-offset:5px; }
-    ::selection { color:var(--bg); background:var(--link); }
-    header { border-bottom:1px solid var(--border); }
-    .header-inner { max-width:960px; min-height:76px; margin:auto; padding:12px 20px; display:flex; flex-wrap:wrap; align-items:center; gap:18px; }
-    .site-title { color:var(--heading); font-size:30px; font-weight:700; line-height:1.1; text-decoration:none; }
-    nav { display:flex; flex:1; justify-content:center; gap:32px; }
-    nav a { font-size:19px; font-weight:700; text-decoration:none; }
-    nav a:hover { text-decoration:underline; }
-    .theme-toggle { display:grid; place-items:center; flex-shrink:0; width:38px; height:38px; border:1px solid var(--border); border-radius:50%; background:none; color:var(--heading); }
-    .theme-toggle:hover { color:var(--link); background:var(--hover); }
-    .theme-toggle svg { width:18px; height:18px; }
-    .sun { display:none; }
-    [data-theme=dark] .sun { display:block; }
-    [data-theme=dark] .moon { display:none; }
-    main { width:min(100% - 40px,920px); margin:32px auto 40px; }
-    h1,h2 { color:var(--heading); line-height:1.25; }
-    h1 { margin:0 0 12px; font-size:36px; text-align:center; }
-    .intro { max-width:65ch; margin:0 auto 28px; text-align:center; }
-    .access { padding:22px 0; border-top:1px solid var(--border); }
-    .access p { margin:0 0 12px; }
-    .access strong { font-weight:700; }
+    main { box-sizing:border-box; width:100%; max-width:var(--site-width); padding:0 20px; margin:32px auto 40px; }
+    main h1 { margin:0 0 12px; text-align:center; }
+    main .intro { max-width:65ch; margin:0 auto 28px; text-align:center; }
+    main .access { padding:22px 0; border-top:1px solid var(--color-border); }
+    main .access p { margin:0 0 12px; }
     .access-links { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px 24px; }
-    .open-link { font-weight:700; font-size:20px; }
-    .server-ip { font-size:16px; color:var(--muted); }
-    .ssh-box { margin-top:8px; padding:22px 24px; border:1px solid var(--border); background:var(--box); }
-    h2 { font-size:24px; margin:0 0 16px; }
+    .open-link { font-weight:bold; font-size:20px; }
+    .server-ip { font-size:16px; color:var(--color-muted); }
+    .ssh-box { margin-top:8px; padding:22px 24px; border:1px solid var(--color-border); }
+    .ssh-box h2 { margin:0 0 16px; }
     .ssh-box p { margin:12px 0; }
     .command-heading { display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
     .command-heading p { margin:0; }
-    .copy { min-width:110px; padding:3px 10px; font-size:15px; border:1px solid var(--border); background:transparent; }
-    .copy:hover { background:var(--hover); }
-    pre { margin:10px 0; padding:14px 16px; overflow-x:auto; background:var(--bg); border:1px solid var(--border); white-space:pre-wrap; overflow-wrap:anywhere; }
+    .copy { min-width:110px; padding:3px 10px; font:15px var(--font-body); color:var(--color-text); border:1px solid var(--color-border); background:transparent; cursor:pointer; }
+    .copy:hover { background:var(--color-link-hover-bg); }
+    pre { margin:10px 0; padding:14px 16px; overflow-x:auto; border:1px solid var(--color-border); white-space:pre-wrap; overflow-wrap:anywhere; }
     code { font:14px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace; }
-    .ssh-box .help { margin:8px 0; font-size:15px; line-height:1.6; color:var(--muted); }
-    .mapping { border-top:1px solid var(--border); padding-top:12px; }
-    footer { margin-top:auto; padding:20px; background:var(--footer); text-align:center; color:var(--heading); font-size:16px; }
-    footer p { margin:0; }
+    .ssh-box .help { margin:8px 0; font-size:15px; line-height:1.6; color:var(--color-muted); }
+    .mapping { border-top:1px solid var(--color-border); padding-top:12px; }
+    :focus-visible { outline:2px solid var(--color-link); outline-offset:5px; }
     [hidden] { display:none; }
-    @media(prefers-reduced-motion:no-preference) { a,button { transition:background-color .15s ease,color .15s ease; } }
   </style>
 </head>
 <body>
-  <header>
-    <div class="header-inner">
-      <a class="site-title" href="https://uv-1999.github.io/">Piyush Marmat</a>
-      <nav aria-label="Main website">
-        <a href="https://uv-1999.github.io/">About</a>
-        <a href="https://uv-1999.github.io/cv/">CV</a>
-        <a href="https://uv-1999.github.io/research/">Research</a>
-        <a href="https://uv-1999.github.io/extra/">Extra</a>
-      </nav>
-      <button class="theme-toggle" id="theme" type="button" aria-label="Switch to dark mode" title="Switch to dark mode" hidden>
-        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.8 13A9 9 0 0 1 11 3.2 9 9 0 1 0 20.8 13Z"/></svg>
-        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
-      </button>
-    </div>
-  </header>
+    <header>
+      <div class="header-content">
+        <a class="title" href="https://uv-1999.github.io/">Piyush Marmat</a>
+        <nav class="pages">
+          <a href="https://uv-1999.github.io/" target="_self">About</a>
+          <a href="https://uv-1999.github.io/cv" target="_self">CV</a>
+          <a href="https://uv-1999.github.io/research" target="_self">Research</a>
+          <a href="https://uv-1999.github.io/extra" target="_self">Extra</a>
+        </nav>
+        <div class="header-controls">
+          <button id="topbutton" onclick="scrollToTop()" class="top-button" aria-label="Scroll to top">
+            <i class="fa-solid fa-arrow-up"></i>
+          </button>
+          <button id="bottombutton" onclick="scrollToBottom()" class="bottom-button" aria-label="Scroll to bottom">
+            <i class="fa-solid fa-arrow-down"></i>
+          </button>
+          <button id="darkmodebutton" class="dark-mode-button" aria-label="Toggle dark mode">
+            <i class="fa-solid fa-sun"></i>
+          </button>
+        </div>
+      </div>
+    </header>
   <main>
     <h1>PSRDEX</h1>
     <p class="intro">Browse and analyse POLFAR pulsar observations at the Janusz Gil Institute of Astronomy.</p>
@@ -96,22 +79,20 @@
       <p class="help" id="copy-status" role="status"></p>
     </section>
   </main>
-  <footer><p>© Piyush Marmat. All rights reserved.</p></footer>
+    <footer class="container" id="footer-container">
+      <div class="footer-links">
+        <a href="mailto:pmarmat@ph.iitr.ac.in" target="_blank" rel="noopener">Email</a>
+        <a href="https://www.linkedin.com/in/piyush-marmat-0ba913240/" target="_blank" rel="noopener">LinkedIn</a>
+        <a href="https://github.com/UV-1999" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://scholar.google.com/citations?user=yhwBklQAAAAJ&hl=en&oi=ao" target="_blank" rel="noopener">Google Scholar</a>
+        <a href="https://orcid.org/0000-0003-2802-113X" target="_blank" rel="noopener">ORCID</a>
+        <a href="https://ui.adsabs.harvard.edu/search/q=author%3A%22Marmat%2C+P%22&sort=date+desc" target="_blank" rel="noopener">NASA-ADS</a>
+        <a href="https://www.researchgate.net/profile/Piyush_Marmat" target="_blank" rel="noopener">Researchgate</a>
+        <p>&copy; Piyush Marmat. All rights reserved.</p>
+      </div>
+    </footer>
+  <script src="https://uv-1999.github.io/main.js"></script>
   <script>
-    const root = document.documentElement;
-    const theme = document.getElementById('theme');
-    function updateThemeLabel() {
-      const label = 'Switch to ' + (root.dataset.theme === 'dark' ? 'light' : 'dark') + ' mode';
-      theme.setAttribute('aria-label', label);
-      theme.title = label;
-    }
-    theme.hidden = false;
-    updateThemeLabel();
-    theme.addEventListener('click', () => {
-      root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
-      try { localStorage.setItem('preferred-theme', root.dataset.theme); } catch {}
-      updateThemeLabel();
-    });
     const copy = document.getElementById('copy');
     copy.hidden = false;
     copy.addEventListener('click', async () => {
